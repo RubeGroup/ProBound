@@ -5,6 +5,7 @@ This repository contains the source code for ProBound.
 To compile ProBound, first install Maven and then execute:
 
 `cd ProBoundApp`
+
 `mvn package`
 
 This will create the compiled JAVA file `ProBoundApp/target/ProBound-jar-with-dependencies.jar`
