@@ -1,0 +1,12 @@
+#!/bin/bash
+
+#First build the full configuration file
+java -jar $PROBOUND_DIR/ProBoundApp/target/ProBound-jar-with-dependencies.jar -b -c config.Bcd.json > config.Bcd.full.json
+
+#Then run ProBound:
+java -jar $PROBOUND_DIR/ProBoundApp/target/ProBound-jar-with-dependencies.jar -c config.Bcd.full.json
+
+#The last line in 'output/out.Bcd.models.json' contains the final model
+
+
+

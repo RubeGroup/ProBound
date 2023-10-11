@@ -1,0 +1,124 @@
+{
+  "optimizerSetting": {
+    "output": {
+      "storeHessian": false,
+      "outputPath": "output/",
+      "printTrajectory": false,
+      "baseName": "out.Bcd",
+      "printPSAM": false,
+      "verbose": true
+    },
+    "likelihoodThreshold": 2.0E-4,
+    "lbfgsSettings": {},
+    "nThreads": 4,
+    "lambdaL2": 1.0E-6,
+    "sgdSettings": {},
+    "fixedLibrarySize": false,
+    "pseudocount": 20,
+    "patternSearchSettings": {},
+    "expBound": 40,
+    "minimizerType": "lbfgs",
+    "nRetries": 3
+  },
+  "modelSettings": {
+    "enrichmentModel": [{
+      "r0KUsed": 1,
+      "round": 1,
+      "bindingSaturation": false,
+      "concentration": 1,
+      "modelType": "SELEX",
+      "bindingModeInteractions": [-1],
+      "r0KsTested": [1],
+      "bindingModes": [-1],
+      "modifications": []
+    }],
+    "countTable": [{
+      "leftFlank": "CGACGCTCTTCCGATCTTGCCG",
+      "transliterate": {
+        "in": [],
+        "out": []
+      },
+      "variableRegionLength": 20,
+      "modeledColumns": [-1],
+      "inputFileType": "tsv.gz",
+      "nColumns": 5,
+      "rightFlank": "TAATCGTATGCCGTCTTCTGCTTGCCGACTCCG",
+      "countTableFile": "countTable.Nitta2015.bcd_KD_TTGCCG20NTA.tsv.gz"
+    }],
+    "bindingModeInteractions": [],
+    "bindingModes": [
+      {
+        "size": 0,
+        "fitLogActivity": true,
+        "flankLength": 0,
+        "dinucleotideDistance": 0,
+        "positionBias": false,
+        "singleStrand": false,
+        "modifications": []
+      },
+      {
+        "size": 12,
+        "fitLogActivity": true,
+        "flankLength": 5,
+        "dinucleotideDistance": 0,
+        "positionBias": false,
+        "singleStrand": false,
+        "modifications": []
+      }
+    ],
+    "letterComplement": "C-G,A-T"
+  },
+  "modelFittingConstraints": {
+    "enrichmentModel": [{
+      "fitDelta": [false],
+      "roundSpecificGamma": true,
+      "fitRho": false,
+      "roundSpecificDelta": true,
+      "fitGamma": false,
+      "trySaturation": false,
+      "roundSpecificRho": true
+    }],
+    "nShifts": 0,
+    "countTable": [{}],
+    "addBindingModesSequentially": true,
+    "flankLengths": [0],
+    "bindingModeInteractions": [],
+    "singleModeLengthSweep": false,
+    "bindingModes": [
+      {
+        "maxFlankLength": -1,
+        "positionBiasBinWidth": 1,
+        "optimizeSizeHeuristic": false,
+        "maxSize": -1,
+        "optimizeFlankLength": false,
+        "symmetryString": "null",
+        "roundSpecificActivity": true,
+        "informationThreshold": 0.1,
+        "optimizeMotifShift": false,
+        "fittingStages": [],
+        "optimizeMotifShiftHeuristic": false,
+        "experimentSpecificPositionBias": true,
+        "minSize": -1,
+        "experimentSpecificActivity": true,
+        "optimizeSize": false
+      },
+      {
+        "maxFlankLength": -1,
+        "positionBiasBinWidth": 1,
+        "optimizeSizeHeuristic": false,
+        "maxSize": -1,
+        "optimizeFlankLength": false,
+        "symmetryString": "null",
+        "roundSpecificActivity": true,
+        "informationThreshold": 0.1,
+        "optimizeMotifShift": false,
+        "fittingStages": [],
+        "optimizeMotifShiftHeuristic": false,
+        "experimentSpecificPositionBias": true,
+        "minSize": -1,
+        "experimentSpecificActivity": true,
+        "optimizeSize": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+[
+{"function": "addTable", "countTableFile": "countTable.Nitta2015.bcd_KD_TTGCCG20NTA.tsv.gz", 
+	"inputFileType": "tsv.gz", "nColumns": 5, "variableRegionLength": 20, 
+	"leftFlank": "CGACGCTCTTCCGATCTTGCCG", "rightFlank": "TAATCGTATGCCGTCTTCTGCTTGCCGACTCCG" }, 
+{"function": "addSELEX"}, 
+{"function": "addNS" }, 
+{"function": "addBindingMode", "size": 12, "flankLength": 5}, 
+{"function": "output", "outputPath": "output/", "baseName": "out.Bcd", "verbose": true }, 
+{"function": "optimizerSetting", "lambdaL2": 1e-6, "pseudocount": 20, "likelihoodThreshold": 0.0002 }
+]
