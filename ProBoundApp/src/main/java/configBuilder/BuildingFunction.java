@@ -142,26 +142,26 @@ public class BuildingFunction {
 			String f = step.getString("function");
 			if(f.equals("addTable"))
 				addTable(step);
-			else if(f.equals("addTableDB"))
-				addTableDB(step);
-			else if(f.equals("addTableDBs"))
-				addTableDBs(step);
+//			else if(f.equals("addTableDB"))
+//				addTableDB(step);
+//			else if(f.equals("addTableDBs"))
+//				addTableDBs(step);
 			else if(f.equals("addSELEX"))
 				addSELEX(step);
-			else if(f.equals("addSELEXDB"))
-				addSELEXDB(step);
-			else if(f.equals("addSELEXTableDB"))
-				addSELEXTableDB(step);
-			else if(f.equals("addSELEXTableDBs"))
-				addSELEXTableDBs(step);
+//			else if(f.equals("addSELEXDB"))
+//				addSELEXDB(step);
+//			else if(f.equals("addSELEXTableDB"))
+//				addSELEXTableDB(step);
+//			else if(f.equals("addSELEXTableDBs"))
+//				addSELEXTableDBs(step);
 			else if(f.equals("addBindingMode"))
 				addBindingMode(step);
 			else if(f.equals("addNS"))
 				addNS(step);
 			else if(f.equals("addInteraction"))
 				addInteraction(step);
-			else if(f.equals("outputDB"))
-				outputDB(step);
+//			else if(f.equals("outputDB"))
+//				outputDB(step);
 			else if(f.equals("output"))
 				output(step);
 			else if(f.equals("optimizerSetting"))
