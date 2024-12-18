@@ -475,7 +475,9 @@ public class LikelihoodOptimizer {
 		//l.bindingModes.get(1).setFreezingLevel(0);
 		//System.out.println("Packing:     "+l.packing.getJSONObject("packing").toString());
 		//System.out.println("");
-/*		System.out.println("================= GRADIENT BEFORE OPTIMIZATION =================");
+		
+		
+		/*System.out.println("================= GRADIENT BEFORE OPTIMIZATION =================");
 		l.lossFunction_updateGradient();
 		double[] vGrad  = l.gradient;
 		double[] vFGrad = l.gradientFiniteDifferences(0.001);
@@ -538,6 +540,10 @@ public class LikelihoodOptimizer {
 			
 			break;
 		}
+		
+		//Computes the testing likelihood, if applicable.
+		if(l.testDataAvailable)
+			l.lossFunction_updateValue_test();
 		
 		System.out.println("After: gradient norm = "+Array.norm(l.gradient));
 		

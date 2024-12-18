@@ -48,6 +48,9 @@ public class CombinedLikelihood extends LossFunction{
 	MersenneTwisterFast randGenerator;
 
 	public double fitStartTime, logLikelihood, logLikelihoodPerRead;
+	public double[] unpenalizedLogLikelihoodPerRead = null;
+	public double[] unpenalizedLogLikelihoodPerReadTest = null; 
+	public boolean testDataAvailable = false;
 	public long fitSteps, functionCalls, gradientCalls;
 	public double dataLoops;
 	public boolean verbose;
@@ -122,6 +125,8 @@ public class CombinedLikelihood extends LossFunction{
 			tableModels.add(new CountTable(config, iExp, sc, letterComplement, letterOrder, true));
 			tableModels.get(iExp).includeComponent = true;
 			tableModels.get(iExp).batchFixedLibrarySize = fixedLibrarySize;
+			if(tableModels.get(iExp).fullTableTest!=null)
+				testDataAvailable = true;
 		}
 		
 		//2. Build binding modes.
@@ -221,20 +226,44 @@ public class CombinedLikelihood extends LossFunction{
 				System.out.println("Experiment "+iExp+":");
 				System.out.println("-------------");
 				System.out.println("Count table:      "+tableModels.get(iExp).componentName);
+				System.out.println("   Probe Bias:  "+tableModels.get(iExp).probeBias);
+				System.out.println("   Error Model: "+tableModels.get(iExp).errorModel);
+				
 				System.out.println("Enrichment model: "+enrichmentModels.get(iExp).componentName);
 				System.out.println("   Concentration: "+enrichmentModels.get(iExp).concentration);
-				
 				System.out.println("Binding modes: ");
-				if(enrichmentModels.get(iExp).bindingModes.size()>0)
-					for(int iBM=0; iBM<enrichmentModels.get(iExp).bindingModes.size(); iBM++)
-						System.out.println("                  "+enrichmentModels.get(iExp).bindingModes.get(iBM).componentName);
-				else
-				System.out.println("                  NONE");
+				if(enrichmentModels.get(iExp).bindingModes.size()>0) {
+					if(enrichmentModels.get(iExp).noRSBM) {
+						for(int iBM=0; iBM<enrichmentModels.get(iExp).bindingModes.size(); iBM++)
+							System.out.println("                  "+enrichmentModels.get(iExp).bindingModes.get(iBM).componentName);
+						
+					} else {
+						for(int iC=0; iC<enrichmentModels.get(iExp).nColumns;iC++) {
+							System.out.println("  Column "+iC);
+							for(int iBM=0; iBM<enrichmentModels.get(iExp).roundBindingModeInclusion[iC].length; iBM++)
+								if(enrichmentModels.get(iExp).roundBindingModeInclusion[iC][iBM])
+									System.out.println("                  "+enrichmentModels.get(iExp).bindingModes.get(iBM).componentName);
+						}
+					}
+				} else 
+					System.out.println("                  NONE");
+
 				System.out.println("Binding mode interactions: ");
-				if(enrichmentModels.get(iExp).interactions.size()>0)
-					for(int iInt=0; iInt<enrichmentModels.get(iExp).interactions.size(); iInt++)
-						System.out.println("                  "+enrichmentModels.get(iExp).interactions.get(iInt).componentName);
-				else
+				if(enrichmentModels.get(iExp).interactions.size()>0) {
+					if(enrichmentModels.get(iExp).noRSint) {
+						for(int iInt=0; iInt<enrichmentModels.get(iExp).interactions.size(); iInt++)
+							System.out.println("                  "+enrichmentModels.get(iExp).interactions.get(iInt).componentName);
+					} else {
+						for(int iC=0; iC<enrichmentModels.get(iExp).nColumns;iC++) {
+							System.out.println("  Column "+iC+":");
+							for(int iInt=0; iInt<enrichmentModels.get(iExp).roundInteractionInclusion[iC].length; iInt++) {
+								if(enrichmentModels.get(iExp).roundInteractionInclusion[iC][iInt]) {
+									System.out.println("                  "+enrichmentModels.get(iExp).interactions.get(iInt).componentName);
+								}
+							}
+						}
+					}
+				} else
 					System.out.println("                  NONE");
 				System.out.println("");
 			}
@@ -365,6 +394,7 @@ public class CombinedLikelihood extends LossFunction{
 			return;
 		value         = 0;
 		logLikelihood = 0;
+		unpenalizedLogLikelihoodPerRead = new double[tableModels.size()];
 		
 		if(computeVariance)
 			valueVariance = 0;
@@ -380,13 +410,17 @@ public class CombinedLikelihood extends LossFunction{
 				double meanFunctionValue = table.functionValue * table.weight;
 				value           += meanFunctionValue;
 				logLikelihood   += table.functionValue;
+				unpenalizedLogLikelihoodPerRead[iTable]=table.functionValue * table.weight;
 				
 				if(computeVariance) {
 					double meanFunctionValueSquared = table.functionValueSquared * table.weight;
 					valueVariance += meanFunctionValueSquared - meanFunctionValue * meanFunctionValue;
 				}
+			} else {
+				unpenalizedLogLikelihoodPerRead[iTable] = 0;	
 			}
 		}
+		
 		
 		//Adds regularization (to value, not to logLikelihoodPerRead and to logLikelihood).
 		JSONObject oReg = getJSONState();
@@ -413,22 +447,42 @@ public class CombinedLikelihood extends LossFunction{
 		functionCalls += 1;
 		dataLoops     += 1.0 * this.lossFunction_getBatchSize() / this.lossFunction_getDataSize();
 		valueUpdated   = true; 
-		
-
-		
-		
-		
+				
 	}
+	
+	
+	// Function for updating function value
+	public void lossFunction_updateValue_test() {
+		
+		unpenalizedLogLikelihoodPerReadTest = new double[tableModels.size()];
+		
+		for(int iTable=0; iTable<tableModels.size(); iTable++) {
+			CountTable table         = tableModels.get(iTable);
+			if(table.includeComponent && table.fullTableTest!=null) {
+				try {
+
+					table.nextBatchAllTest();
+					table.updateValue();
+					unpenalizedLogLikelihoodPerReadTest[iTable]=table.functionValue * table.weight;
+					table.nextBatchAll();
+
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			} else {
+				unpenalizedLogLikelihoodPerReadTest[iTable]=0.0;
+			}
+		}
+	}
+	
+	
 
 	// Function for updating the gradient
 	@Override
 	public void lossFunction_updateGradient() {
 		if(valueUpdated&&gradientUpdated)
 			return;
-		
-		//TODO: REMOVE?
-		lossFunction_setComputeVariance(true);
-		
+				
 		//System.out.println("tableModels.size() = "+tableModels.size());
 		//Computes the gradient.
 		for(int iTable=0; iTable<tableModels.size(); iTable++) {
@@ -447,6 +501,8 @@ public class CombinedLikelihood extends LossFunction{
 		//Sets function value to zero;
 		value          = 0;
 		logLikelihood  = 0;
+		unpenalizedLogLikelihoodPerRead = new double[tableModels.size()];
+
 		
 		if(computeVariance)
 			valueVariance  = 0;
@@ -475,7 +531,8 @@ public class CombinedLikelihood extends LossFunction{
 						table.weight);
 				value         += meanFunctionValue;
 				logLikelihood += table.functionValue;
-				
+				unpenalizedLogLikelihoodPerRead[i]=table.functionValue * table.weight;
+
 				//Sums up the squared gradient value across
 				if(computeVariance) {
 					
@@ -496,13 +553,15 @@ public class CombinedLikelihood extends LossFunction{
 					valueVariance += meanFunctionValueSquared - meanFunctionValue * meanFunctionValue;
 					
 				}
+			} else {
+				unpenalizedLogLikelihoodPerRead[i] = 0;
 			}
 		}
-		
+				
 		//Adds regularization (to value, not to logLikelihoodPerRead and to logLikelihood).
 		JSONObject oReg = getJSONState();
 		double L2Sum = ModelComponent.trJSONObject_O(ModelComponent.multiplyJSONObject_O(oReg.getJSONObject("coefficients"), oReg.getJSONObject("coefficients")));
-		regularizationTerm = 0;
+		regularizationTerm  = 0;
 		
 		//L2 regularization
 		regularizationTerm += lambdaL2*L2Sum;
@@ -739,8 +798,11 @@ public class CombinedLikelihood extends LossFunction{
     	metadata.put("dataLoops",     dataLoops);
     	metadata.put("logLikelihood", logLikelihood);
     	metadata.put("logLikelihoodPerRead", logLikelihoodPerRead);
+    	metadata.put("unpenalizedLogLikelihoodPerRead", ModelComponent.JSONArrayConvert_d(unpenalizedLogLikelihoodPerRead));
+    	if(testDataAvailable && unpenalizedLogLikelihoodPerRead!=null)
+        	metadata.put("unpenalizedLogLikelihoodPerReadTest", ModelComponent.JSONArrayConvert_d(unpenalizedLogLikelihoodPerReadTest));
     	metadata.put("regularization", regularizationTerm);
-        
+    	;
         return metadata;
 	}
 

@@ -31,10 +31,16 @@ public class CountTable extends ModelComponent  {
 	public String letterOrder;
 	int nMono, nDi;
 	public MultiRoundData fullTable;
-	ArrayList<LongSequence> longProbes;
 	public int l, nColumns;
 	public int nReads;
 	String countTableFile, inputFileType, rightFlank, leftFlank;
+	
+	//Variables for testing data
+	public MultiRoundData fullTableTest = null;
+	public int nReadsTest;
+//	String countTableFileTest = null;
+	public int[] testFolds = null;
+	ArrayList<Integer> stachedProbeIndices = null;
 	
 	MersenneTwisterFast randGenerator;
 	//Variables defining the batch table.
@@ -42,8 +48,13 @@ public class CountTable extends ModelComponent  {
 	public ArrayList<int[]> batchProbeCounts;
 	public int[] batchCountPerRound;
 	public boolean batchFixedLibrarySize;
+	public MultiRoundData batchFullTable;
 	ArrayList<int[]> readIndices = null;
 
+	public boolean probeBias;
+	public String errorModel;
+	boolean usePoisson, useNormal, useLogNormal;
+	
 	//Round that should be included in the likelihood.
 	public int[] modeledColumns;
 	
@@ -113,30 +124,77 @@ public class CountTable extends ModelComponent  {
 		computeVariance     = false;
 		
 		if(loadData) {
-			loadDataTable(Misc.readDataFile(config, sc, iComp));
+
+			//Loads the Training Data
+			//TODO: Clean up
+			MultiRoundData tempTrainTable = Misc.readDataFile(config, sc, iComp);
+//			MultiRoundData tempTrainTable = Misc.readDataFile(config, sc, iComp, false);
+			MultiRoundData tempTestTable  = null;
+			
+//			if(testFolds!=null&&countTableFileTest!=null)
+//				throw new IllegalArgumentException("For count table, "+iComp+", both 'countTableFileTest' and 'testFolds' are specified, but at can one should be used.");
+
+			
+			//Alternative 1: Splits the training/test data
+			if(testFolds!=null&&testFolds.length>0) {
+				if(countTableFile==null||!inputFileType.equals("tsv.gz")||countTableFile.length()<6||!countTableFile.endsWith("tsv.gz"))
+					throw new IllegalArgumentException("The argument 'testFolds' is only available for 'tsv.gz' input count table files.");
+				
+				ArrayList<MultiRoundData> splitTables = Misc.splitTableTrainTest(countTableFile.replaceAll("tsv\\.gz$", "folds.gz"), tempTrainTable, testFolds);
+				tempTrainTable = splitTables.get(0);
+				tempTestTable  = splitTables.get(1);				
+			}
+			
+			//Alternative 2: Loads separate testing data. 
+//			if(countTableFileTest!=null)
+//				tempTestTable = Misc.readDataFile(config, sc, iComp, true);
+
+			//Loads the training table
+			loadDataTable(tempTrainTable, false);
+				
+			//Loads the testing table
+			if(tempTestTable!=null)
+				loadDataTable(tempTestTable, true);
+			
+			nextBatchAll();
+
 		}
-	
+			
 	}
 		
-	public void loadDataTable(MultiRoundData dataIn) {
+	public void loadDataTable(MultiRoundData dataIn, boolean isTest) {
 		
 		//Reads data, builds a naive batch.
-		fullTable          = dataIn;
-		if(fullTable.longProbes==null)
-			fullTable.encodeLongToLongSequence(sc);
+		if(dataIn.longProbes==null)
+			dataIn.encodeLongToLongSequence(sc);
 
 		//Transliterates characters
 		if(trIn.size()>0) 
-			MultiRoundData.transliterate(fullTable, sc, trIn, trOut);
+			MultiRoundData.transliterate(dataIn, sc, trIn, trOut);
 
-		longProbes         = fullTable.longProbes;
-		nReads             = 0;
+		//Counts the number of reads
+		int nReadsTemp = 0;
 		for(int r: modeledColumns)
-			nReads += (int) fullTable.countPerRound[r];
+			nReadsTemp += (int) dataIn.countPerRound[r];
 		
-		nextBatchAll();
-		
+		//Checks so the length of the probes are correct
+		if(dataIn.longProbes.get(0).getLength() != l)
+			throw new IllegalArgumentException("For count table (test="+isTest+")"+iComp+", modelSettings.countTable.variableRegionLength="+l+" does not match the length of the first sequence in the count table ("+dataIn.longProbes.get(0)+").");
+
+
+		if(isTest) {
+			//Saves training data
+			fullTableTest      = dataIn;
+			nReadsTest         = nReadsTemp;
+
+		} else {
+			//Saves training data
+			fullTable          = dataIn;
+			nReads             = nReadsTemp;
+		}
 	}
+	
+
 	
 	//Sets up threading.
 	public void setNThreads(int nThreads) {
@@ -267,8 +325,12 @@ public class CountTable extends ModelComponent  {
 			double alphaPBSum = (oBM.usePositionBias && oBM.k>0) ? tr_Ad(oBM.positionBiasAlphas.get(iComp)) : oBM.maxFrames.get(iComp);
 			
 			//Adds contribution to the alpha sum
-			for(int iCol=0; iCol<nColumns; iCol++)
-				alphaSum[iCol] += alphaSeq * alphaPBSum * oBM.activityAlphas.get(iComp)[iCol] * enr.concentration;
+			for(int iCol=0; iCol<nColumns; iCol++) {
+				for(Integer iRSBM : enr.roundSpecificBindingModes.get(iCol)) //Use correct binding modes in each column
+					if(iBM==iRSBM) 
+						alphaSum[iCol] += alphaSeq * alphaPBSum * oBM.activityAlphas.get(iComp)[iCol] * enr.concentration;
+			}
+					
 		}
 		
 		//Sums over interactions
@@ -287,7 +349,9 @@ public class CountTable extends ModelComponent  {
 
 			//Adds contribution to the alpha sum
 			for(int iCol=0; iCol<nColumns; iCol++)
-				alphaSum[iCol] += alphaSeq * alphaIntSum * oInt.activityAlphas.get(iComp)[iCol] * enr.concentration;
+				for(Integer iRSInt : enr.roundSpecificInteractions.get(iCol))
+					if(iInt==iRSInt)
+						alphaSum[iCol] += alphaSeq * alphaIntSum * oInt.activityAlphas.get(iComp)[iCol] * enr.concentration;
 
 
 		}
@@ -338,7 +402,16 @@ public class CountTable extends ModelComponent  {
 		oCT.put("rightFlank",           rightFlank);
 		oCT.put("leftFlank",            leftFlank);
 		oCT.put("modeledColumns",       ModelComponent.JSONArrayConvert_i(modeledColumns));
+		oCT.put("probeBias",            probeBias);
+		oCT.put("errorModel",           errorModel);
+	
+		//TODO: Clean up
+//		if(countTableFileTest!=null)
+//			oCT.put("countTableFileTest",       countTableFileTest);
 		
+		if(testFolds!=null)
+			oCT.put("testFolds",        ModelComponent.JSONArrayConvert_i(testFolds));
+			
 		JSONObject oTR = new JSONObject();
 		oCT.put("transliterate", oTR);
 		oTR.put("in",            trIn);
@@ -352,11 +425,28 @@ public class CountTable extends ModelComponent  {
 		String coefficientKey = "modelSettings";
 		JSONObject oCT        = in.getJSONObject(coefficientKey).getJSONArray(componentKey).getJSONObject(iComp);
 		countTableFile        = oCT.getString("countTableFile");
+		
 		inputFileType         = oCT.getString("inputFileType");
 		nColumns              = oCT.getInt("nColumns");
 		l                     = oCT.getInt("variableRegionLength");
 		rightFlank            = oCT.getString("rightFlank");
 		leftFlank             = oCT.getString("leftFlank");
+		
+		//TODO: Clean up
+//		countTableFileTest    = oCT.has("countTableFileTest") ? oCT.getString("countTableFileTest")           : null;
+		testFolds             = oCT.has("testFolds")          ? readFromJSON_i(oCT.getJSONArray("testFolds")) : null;
+
+		
+		
+		probeBias              = oCT.has("probeBias") ? oCT.getBoolean("probeBias") : true;
+		errorModel             = oCT.has("errorModel")? oCT.getString("errorModel") : "Poisson";
+		
+		if(errorModel.equals("Poisson"))
+			usePoisson=true;
+		if(errorModel.equals("Normal"))
+			useNormal=true;
+		if(errorModel.equals("LogNormal"))
+			useLogNormal=true;
 		
 		//By default, all columns are modeled.
 		modeledColumns = new int[nColumns];
@@ -470,6 +560,12 @@ public class CountTable extends ModelComponent  {
 	//Creates a new batch table given a list of read indices for each column.
 	public void nextBatch(ArrayList<int[]> randomReads, double expectedReadCount) {
 		
+		//TODO: Implement This.
+		if(!usePoisson)
+			throw new IllegalArgumentException("Batched likelihood evaluator has only been developed for Poisson likelihood and needs to be exteneded to cover the Normal and Log-Normal error functions .");
+
+		
+		
 		//FIRST TIME ONLY: Creates a list of reads: readIndices[iColumn][iRead] = <index of probe>
 		if(readIndices==null) {
 			readIndices = new ArrayList<int[]>();
@@ -477,7 +573,7 @@ public class CountTable extends ModelComponent  {
 				int[] newIndices = new int[fullTable.countPerRound[iCol]];
 				readIndices.add(newIndices);
 				int iRead = 0;
-				for(int iProbe=0; iProbe<longProbes.size(); iProbe++) {
+				for(int iProbe=0; iProbe<fullTable.longProbes.size(); iProbe++) {
 					int readCount = fullTable.countTable.get(iProbe)[iCol];
 					if(readCount>0) {
 						for(int a=0; a<readCount; a++) {
@@ -493,6 +589,7 @@ public class CountTable extends ModelComponent  {
 		batchProbeIndices  = new ArrayList<Integer>();
 		batchProbeCounts   = new ArrayList<int[]>();
 		batchCountPerRound = new int[nColumns];
+		batchFullTable     = fullTable;
 		
 		//Map from index of probe in the full table to index of the probe in the batch table.
 		HashMap<Integer,Integer> probeToBatchRow  = new HashMap<Integer,Integer>();
@@ -516,12 +613,18 @@ public class CountTable extends ModelComponent  {
 			}
 		}
 		
-		weight        = 1. / expectedReadCount;
+		weight = 1. / expectedReadCount;
+		
 		threadSchedule(nThreads);	
 	}
 	
 	//Creates a new batch given a list of read indices (not grouped by column)
 	public void nextBatch(int[] randomUnsortedReads, double expectedReadCount) {
+		
+		//TODO: Implement This.
+		if(!usePoisson)
+			throw new IllegalArgumentException("Batched likelihood evaluator has only been developed for Poisson likelihood and needs to be exteneded to cover the Normal and Log-Normal error functions .");
+
 		
 		int[] cpr = fullTable.countPerRound;
 		
@@ -561,20 +664,56 @@ public class CountTable extends ModelComponent  {
 	//Creates a new batch using all reads.
 	public void nextBatchAll() {
 		//Uses all reads in the table
-		batchProbeCounts   = fullTable.countTable;
-		batchCountPerRound = fullTable.countPerRound;
-		batchProbeIndices  = new ArrayList<Integer>();
+		batchFullTable     = fullTable;
+		batchProbeCounts   = batchFullTable.countTable;
+		batchCountPerRound = batchFullTable.countPerRound;
+		if(stachedProbeIndices==null) {
+			batchProbeIndices  = new ArrayList<Integer>();
+			for(int i=0; i<batchProbeCounts.size(); i++)
+				batchProbeIndices.add(i);
+		} else {
+			batchProbeIndices   = stachedProbeIndices;
+			stachedProbeIndices = null;
+		}
+		
+		//Schedules the threads.
+		threadSchedule(nThreads);
+		
+		if(usePoisson)
+			weight = 1.0 / nReads;
+		else 
+			weight = 1.0 / batchFullTable.longProbes.size();
+
+	}
+	
+	//Creates a new batch using all testing reads.
+	public void nextBatchAllTest() {
+		//Uses all reads in the table
+		batchFullTable      = fullTableTest;
+		batchProbeCounts    = batchFullTable.countTable;
+		batchCountPerRound  = batchFullTable.countPerRound;
+		stachedProbeIndices = batchProbeIndices;
+		batchProbeIndices   = new ArrayList<Integer>();
 		for(int i=0; i<batchProbeCounts.size(); i++)
 			batchProbeIndices.add(i);
 		
 		//Schedules the threads.
 		threadSchedule(nThreads);
-		weight             = 1.0 / nReads;
+		
+		if(usePoisson)
+			weight = 1.0 / nReadsTest;
+		else 
+			weight = 1.0 / batchFullTable.longProbes.size();
+
 	}
 	
 	//Creates a new batch given the total number of desired reads.
 	public void nextBatch(int nDataIn) {
 		
+		//TODO: Implement This.
+		if(!usePoisson)
+			throw new IllegalArgumentException("Batched likelihood evaluator has only been developed for Poisson likelihood and needs to be exteneded to cover the Normal and Log-Normal error functions .");
+
 		if(fullTable.countTable!=null) {
 
 			//Counts the number of reads
@@ -664,7 +803,7 @@ public class CountTable extends ModelComponent  {
 		}
 		
 		for(int iProbe=0; iProbe<batchProbeCounts.size(); iProbe++)
-			System.out.println(longProbes.get(batchProbeIndices.get(iProbe)).toString()+"\t"+Misc.formatVector_i(batchProbeCounts.get(iProbe), "\t", "", ""));
+			System.out.println(batchFullTable.longProbes.get(batchProbeIndices.get(iProbe)).toString()+"\t"+Misc.formatVector_i(batchProbeCounts.get(iProbe), "\t", "", ""));
 			
 		//Returns to original stream.
 		System.setOut(originalStream);
@@ -723,6 +862,7 @@ public class CountTable extends ModelComponent  {
 		//Sum up value and return
 		for (Future<JSONObject> currentThread : threadOutput) {
 			threadResult   = currentThread.get();
+			//Note: The sign flips: threadResults.functionValue is log-likelihood, 'functionValue' is negative log-likelihood  
 			functionValue -= threadResult.getDouble("functionValue");
 			if(computeVariance) {
 				functionValueSquared += threadResult.getDouble("functionValueSquared");
@@ -758,6 +898,7 @@ public class CountTable extends ModelComponent  {
 		//Sum up value and return
 		for (Future<JSONObject> currentThread : threadOutput) {
 			threadResult              = currentThread.get();
+			//Note: The sign flips: threadResults.functionValue is log-likelihood, 'functionValue' is negative log-likelihood (same for gradient).
 			functionValue            -= threadResult.getDouble("functionValue");
 			ModelComponent.addJSONObject_O(gradient.getJSONObject("gradient"), threadResult.getJSONObject("gradient"), -1);
 			
@@ -769,13 +910,15 @@ public class CountTable extends ModelComponent  {
 		}
 	}
 	
-	private void computePRI(double[] pRI, double[] kappaRI, double[] deltaKappaRI) {
+	private void computePRI(double[] pRI, double[] kappaRI, double[] deltaKappaRI, double[] etaKappa) {
 		
 		//Calculates Kappa
 		if(enr.cumulativeEnrichment){
 			double runningKappaProduct = 1.0;
+			//TODO: Should the product start at r=1? In theory this the first factor should cancel out in PRI, but numerical errors might decrease. 
 			for(int r=0; r<nColumns; r++){
-				runningKappaProduct *= deltaKappaRI[r];
+				if(r>0)
+					runningKappaProduct *= deltaKappaRI[r];
 				kappaRI[r] = runningKappaProduct;
 			}
 		} else {
@@ -788,12 +931,14 @@ public class CountTable extends ModelComponent  {
 		double zProbe = 0.0;
 		for(int r=0; r<nColumns; r++)
 			pRI[r] = 0;
+		
 		for(int r: modeledColumns) {
-			pRI[r] = eta[r] * kappaRI[r];
-			zProbe += pRI[r];
+			etaKappa[r] = eta[r] * kappaRI[r];
+			zProbe += etaKappa[r];
 		}
 		
-		for(int r: modeledColumns) pRI[r] /= zProbe;
+		for(int r: modeledColumns) 
+			pRI[r] = etaKappa[r] / zProbe;
 
 	}
 	
@@ -811,6 +956,7 @@ public class CountTable extends ModelComponent  {
 		double[] deltaKappaRI         = new double[nRounds];
 		double[] kappaRI              = new double[nRounds];
 		double[] pRI                  = new double[nRounds];
+		double[] etaKappa             = new double[nRounds];
 		
 		ArrayList<SlidingWindow> sw  = new ArrayList<SlidingWindow>();
 		for(int bm=0; bm<enr.nModes; bm++)
@@ -826,28 +972,66 @@ public class CountTable extends ModelComponent  {
 			System.exit(1);
 		}
 
-		int nDataPoints		= longProbes.size();
+		int nDataPoints		= fullTable.longProbes.size();
 		
 		//Loops over all probes (ignoring possible batching and multithreading.)
 		for(int iProbe=0; iProbe<nDataPoints; iProbe++) {
 			//Updates alpha values.
-			enr.computeAlphas(sw, alphaSeq, alphaInt, alphaRI, longAlphaList, longProbes.get(iProbe));
+			enr.computeAlphas(sw, alphaSeq, alphaInt, alphaRI, longAlphaList, fullTable.longProbes.get(iProbe));
 			//Calculates deltaKappa:
 			enr.updateDeltaKappaRI(deltaKappaRI, alphaRI, nRounds);
 			//Computes pRI.
-			computePRI(pRI, kappaRI, deltaKappaRI);
-			//Counts the reads in the modeled columns.
-			long nRow = 0;
-			for(int r:modeledColumns)
-				nRow += fullTable.countTable.get(iProbe)[r];
+			computePRI(pRI, kappaRI, deltaKappaRI, etaKappa);
 			
 			//Prefroms reverse transliteration to get the original sequence.
-			String probeSeq = longProbes.get(iProbe).toString();
+			String probeSeq = fullTable.longProbes.get(iProbe).toString();
 			for(int iTr=0; iTr<trIn.size(); iTr++) 
 				probeSeq = probeSeq.replaceAll(trOut.get(iTr), trIn.get(iTr));
 			
 			//Multiplies pRI by the number of reads.
-			System.out.println(probeSeq + "\t" + Misc.formatVectorE_d(Array.scalarMultiply(pRI, nRow),"\t","","", 10));
+			/*System.out.println(probeSeq + "\t" + Misc.formatVectorE_d(Array.scalarMultiply(pRI, nRow),"\t","","", 10));*/
+			
+			
+			
+			////
+			if(usePoisson || useNormal) {
+								
+				if(probeBias) {
+					
+					//Counts the reads in the modeled columns.
+					long nRow = 0;
+					for(int r:modeledColumns)
+						nRow += fullTable.countTable.get(iProbe)[r];
+
+					System.out.println(probeSeq + "\t" + Misc.formatVectorE_d(Array.scalarMultiply(pRI, nRow),"\t","","", 10));
+				} else {
+					
+					System.out.println(probeSeq + "\t" + Misc.formatVectorE_d(etaKappa,"\t","","", 10));
+
+				}
+			} else {
+								
+				if(probeBias) {
+					
+					double geometricMeanN = 1.0, geometricmeanEtaKappa = 1.0;
+					for(int r: modeledColumns) {
+						geometricMeanN        *= fullTable.countTable.get(iProbe)[r];
+						geometricmeanEtaKappa *= etaKappa[r];
+					}
+					geometricMeanN        = Math.pow(geometricMeanN,        1/modeledColumns.length);
+					geometricmeanEtaKappa = Math.pow(geometricmeanEtaKappa, 1/modeledColumns.length);
+
+
+					System.out.println(probeSeq + "\t" + Misc.formatVectorE_d(Array.scalarMultiply(pRI, geometricMeanN/geometricmeanEtaKappa),"\t","","", 10));
+
+				} else {
+
+					System.out.println(probeSeq + "\t" + Misc.formatVectorE_d(etaKappa,"\t","","", 10));
+					
+				}
+			}
+			
+			///
 		} 
 		
 		//Returns to original stream.
@@ -875,7 +1059,7 @@ public class CountTable extends ModelComponent  {
 			sw.add(enr.bindingModes.get(bm).getSlidingWindow(iComp, enr.modifications));
 
 		//Loops over probes.
-		int nSequences		          = longProbes.size();
+		int nSequences		          = fullTable.longProbes.size();
 		PrintStream original          = System.out;
 		
 		try {
@@ -888,11 +1072,11 @@ public class CountTable extends ModelComponent  {
 		
 		//Loops over sequences, computes affinity sums (alphas), and writes to file
 		for(int iProbe=0; iProbe<nSequences; iProbe++) {
-			LongSequence currentProbeSeq = longProbes.get(iProbe);
+			LongSequence currentProbeSeq = fullTable.longProbes.get(iProbe);
 			enr.computeAlphas(sw, alphaSeq, alphaInt, alphaRI, longAlphaList, currentProbeSeq);
 
 			//Writes the table
-			String outString   = longProbes.get(iProbe).toString();
+			String outString   = fullTable.longProbes.get(iProbe).toString();
 			if(writeBMInt) {
 				//Writes the alpha sum for each binding mode and interaction separately
 				
@@ -950,7 +1134,7 @@ public class CountTable extends ModelComponent  {
 		}
 		
 		//Loops over probes.
-		int nSequences		          = longProbes.size();
+		int nSequences		          = fullTable.longProbes.size();
 		PrintStream original          = System.out;
 		
 		//Opens output file
@@ -969,7 +1153,7 @@ public class CountTable extends ModelComponent  {
 		ArrayList<ArrayList<Double>> longAlphaList;
 		for(int iProbe=0; iProbe<nSequences; iProbe++) {
 			
-			LongSequence currentProbeSeq = longProbes.get(iProbe);
+			LongSequence currentProbeSeq = fullTable.longProbes.get(iProbe);
 			
 			System.out.print(currentProbeSeq.toString());
 			
@@ -1036,6 +1220,7 @@ public class CountTable extends ModelComponent  {
 	// (maxStrandMean / minStrandMean) * maxValue
 	public HashMap<Integer,Double> getEmpericalBindingModeActivities() {
 		
+		//TODO: Consider updating to respect round-specifc binding modes/interactions.
 		HashMap<Integer,Double> out = new HashMap<Integer,Double>();
 				
 		//Loops over binding modes (that are relevant for this count table)
@@ -1060,8 +1245,8 @@ public class CountTable extends ModelComponent  {
 			double[] vSumFwrd = new double[nColumns], vSumRvrs = new double[nColumns];
 
 			
-			for(int iProbe=0; iProbe<longProbes.size(); iProbe++) {
-				LongSequence currentProbeSeq = longProbes.get(iProbe);
+			for(int iProbe=0; iProbe<fullTable.longProbes.size(); iProbe++) {
+				LongSequence currentProbeSeq = fullTable.longProbes.get(iProbe);
 				
 				//Scores using sliding window (that doesn't go into the flanks).
 				if(!oBM.swIncludeDi) {
@@ -1197,6 +1382,7 @@ public class CountTable extends ModelComponent  {
 			double[] deltaKappaRI         = new double[nRounds];
 			double[] kappaRI              = new double[nRounds];
 			double[] pRI                  = new double[nRounds];
+			double[] etaKappa             = new double[nRounds];
 			
 			ArrayList<SlidingWindow> sw = new ArrayList<SlidingWindow>();
 			for(int bm=0; bm<enr.nModes; bm++)
@@ -1209,17 +1395,51 @@ public class CountTable extends ModelComponent  {
 			if(startIdx!=-1) {
 				for(int i=startIdx; i<endIdx; i++) {
 					//Updates alpha values.
-					enr.computeAlphas(sw, alphaSeq, alphaInt, alphaRI, longAlphaList, longProbes.get(batchProbeIndices.get(i)));
+					enr.computeAlphas(sw, alphaSeq, alphaInt, alphaRI, longAlphaList, batchFullTable.longProbes.get(batchProbeIndices.get(i)));
 												  
 					//Calculates deltaKappa:
 					enr.updateDeltaKappaRI(deltaKappaRI, alphaRI, nRounds);
 					
 					//Computes pRI.
-					computePRI(pRI, kappaRI, deltaKappaRI);
+					computePRI(pRI, kappaRI, deltaKappaRI, etaKappa);
 				
 					double probeValue = 0;
-					for(int r: modeledColumns) 
-						probeValue += batchProbeCounts.get(i)[r] * Math.log(pRI[r]);
+					if(usePoisson) {
+						if(probeBias) {
+							for(int r: modeledColumns)
+								probeValue += batchProbeCounts.get(i)[r] * Math.log(pRI[r]);
+						} else {
+							for(int r: modeledColumns)
+								probeValue += batchProbeCounts.get(i)[r] *  Math.log(etaKappa[r]) - etaKappa[r];
+						}
+					} else if(useNormal) {
+						if(probeBias) {
+							double nI = 0;
+							for(int r: modeledColumns)
+								nI += batchProbeCounts.get(i)[r];
+							for(int r: modeledColumns)
+								probeValue += - Math.pow(batchProbeCounts.get(i)[r] - nI*pRI[r],2);
+						} else {
+							for(int r: modeledColumns)
+								probeValue += - Math.pow(batchProbeCounts.get(i)[r] - etaKappa[r],2);
+						}
+					} else {
+						if(probeBias) {
+							double geometricMeanN = 1.0, geometricmeanEtaKappa = 1.0;
+							for(int r: modeledColumns) {
+								geometricMeanN        *= batchProbeCounts.get(i)[r];
+								geometricmeanEtaKappa *= etaKappa[r];
+							}
+							geometricMeanN        = Math.pow(geometricMeanN,        1/modeledColumns.length);
+							geometricmeanEtaKappa = Math.pow(geometricmeanEtaKappa, 1/modeledColumns.length);
+							for(int r: modeledColumns)
+								probeValue += - Math.pow(Math.log((batchProbeCounts.get(i)[r]/geometricMeanN) / (etaKappa[r]/geometricmeanEtaKappa)),2);
+						} else {
+							for(int r: modeledColumns)
+								probeValue += - Math.pow(Math.log(batchProbeCounts.get(i)[r]/etaKappa[r]),2);
+							
+						}
+					}
 					
 					functionValue        += probeValue;
 					functionValueSquared += probeValue*probeValue;
@@ -1381,6 +1601,7 @@ public class CountTable extends ModelComponent  {
 			double[] alphaRI              = new double[nColumns];
 			double[] deltaKappaRI         = new double[nColumns];
 			double[] kappaRI              = new double[nColumns];
+			double[] etaKappa             = new double[nColumns];
 			double[] pRI                  = new double[nColumns];	
 			double[] gradientWeight       = new double[nModes];
 			double[] nablaF1              = new double[nColumns];
@@ -1424,7 +1645,7 @@ public class CountTable extends ModelComponent  {
 				for(int i=startIdx; i<endIdx; i++) {
 				//do {
 					
-					LongSequence currentSeq = longProbes.get(batchProbeIndices.get(i));
+					LongSequence currentSeq = batchFullTable.longProbes.get(batchProbeIndices.get(i));
 
 					//Updates alpha values.
 					enr.computeAlphas(sw, alphaSeq, alphaInt, alphaRI, longAlphaList, currentSeq);
@@ -1433,14 +1654,83 @@ public class CountTable extends ModelComponent  {
 					enr.updateDeltaKappaRI(deltaKappaRI, alphaRI, nColumns);
 
 					//Computes pRI.
-					computePRI(pRI, kappaRI, deltaKappaRI);
+					computePRI(pRI, kappaRI, deltaKappaRI, etaKappa);
 
 					//The delta/nabla N weight..
 					int[] countRI = batchProbeCounts.get(i);
 					Integer nI = 0;
 					for(int r: modeledColumns) nI       += countRI[r];                 // nI = number of reads across rounds
 					for(int r: modeledColumns) deltaN[r] = 0;                          // Only uses the modeled columns when computing...
-					for(int r: modeledColumns) deltaN[r] = (countRI[r] - nI * pRI[r]); // ...the difference between observed and expected counts.
+					
+					double probeValue    = 0.0;
+
+					if(usePoisson) { // Computes log L and d(log L) / dkappa
+						if(probeBias) { 
+							//Poisson error, With Probe Bias
+							for(int r : modeledColumns) {
+								
+								probeValue += countRI[r] * Math.log(pRI[r]);
+								deltaN[r]   = (countRI[r] - nI * pRI[r]);
+							}
+						} else {
+							//Poisson error, No Probe Bias
+							for(int r : modeledColumns) {
+								probeValue += countRI[r] *  Math.log(etaKappa[r]) - etaKappa[r];
+								deltaN[r]   = (countRI[r] - etaKappa[r]);
+							}
+						}
+					} else if(useNormal) {
+						if(probeBias) {
+							//Normal error, With Probe Bias
+							
+							//Computes delta n
+							double[] dn = new double[nColumns];
+							for(int r : modeledColumns)
+								dn[r] = countRI[r] - nI*pRI[r];
+							//Computes delta-delta n
+							double[] ddn = new double[nColumns];
+							double sumDnPRI=0;
+							for(int r : modeledColumns)
+								sumDnPRI += dn[r]*pRI[r];
+							for(int r : modeledColumns)
+								ddn[r] = dn[r] - sumDnPRI;
+							
+							for(int r : modeledColumns) {
+								probeValue += - Math.pow(countRI[r] - nI*pRI[r],2);
+								deltaN[r]  += 2*nI*pRI[r]*ddn[r];
+ 							}
+						} else {
+							//Normal error, No Probe Bias
+							for(int r: modeledColumns) { 
+								probeValue += - Math.pow(countRI[r] - etaKappa[r],2);
+								deltaN[r] = 2*(countRI[r] - etaKappa[r])*etaKappa[r];
+							}
+						}
+					} else if (useLogNormal) {
+						if(probeBias) { 
+							//Log-Normal error, With Probe Bias
+							double geometricMeanN = 1.0, geometricmeanEtaKappa = 1.0;
+							for(int r: modeledColumns) {
+								geometricMeanN        *= countRI[r];
+								geometricmeanEtaKappa *= etaKappa[r];
+							}
+							geometricMeanN        = Math.pow(geometricMeanN,        1/modeledColumns.length);
+							geometricmeanEtaKappa = Math.pow(geometricmeanEtaKappa, 1/modeledColumns.length);
+							for(int r : modeledColumns) {
+								double m = countRI[r]/geometricMeanN;
+								double q = etaKappa[r]/geometricmeanEtaKappa;
+								probeValue += - Math.pow(Math.log(m/q),2);
+								deltaN[r]  += 2*Math.log(m/q);
+							}
+						} else {
+							//Log-Normal error, No Probe Bias
+							for(int r : modeledColumns) {
+								probeValue += - Math.pow(Math.log(countRI[r]/etaKappa[r]),2);
+								deltaN[r]   = 2*Math.log(countRI[r]/etaKappa[r]);
+							}
+						}
+					}
+					
 
 					if(enr.cumulativeEnrichment){
 						double cumulativeN = 0.0 ;
@@ -1452,11 +1742,7 @@ public class CountTable extends ModelComponent  {
 						for(int r=0; r<nColumns; r++) nablaN[r] = deltaN[r];
 					}
 					
-					
-					//Updates function value
-					double probeValue    = 0.0;
-					for(int r : modeledColumns)
-						probeValue           += countRI[r] * Math.log(pRI[r]);
+	
 					functionValue            += probeValue;
 					if(computeVariance)
 						functionValueSquared += probeValue*probeValue;
@@ -1484,11 +1770,13 @@ public class CountTable extends ModelComponent  {
 										if(oBM.usePositionBias) {
 											double[] pbTemp             = oBM.positionBiasAlphas.get(iComp).get(s);
 											for(int r=0; r<nColumns; r++) {
-												tempWeight += nablaF1[r] * oBM.activityAlphas.get(iComp)[r] * enr.concentration * alphaTemp.get(x) * pbTemp[x];
+												if(enr.roundBindingModeInclusion[r][bm])
+													tempWeight += nablaF1[r] * oBM.activityAlphas.get(iComp)[r] * enr.concentration * alphaTemp.get(x) * pbTemp[x];
 											}
 										} else {
 											for(int r=0; r<nColumns; r++) {
-												tempWeight += nablaF1[r] * oBM.activityAlphas.get(iComp)[r] * enr.concentration * alphaTemp.get(x);
+												if(enr.roundBindingModeInclusion[r][bm])
+													tempWeight += nablaF1[r] * oBM.activityAlphas.get(iComp)[r] * enr.concentration * alphaTemp.get(x);
 											}
 										}
 
@@ -1504,23 +1792,25 @@ public class CountTable extends ModelComponent  {
 												int nf1 = oInt.b1.maxFrames.get(iComp)/2;
 
 												for(int r=0; r<nColumns; r++){
-													double intActConcTemp = oInt.activityAlphas.get(iComp)[r] * enr.concentration;
+													if(enr.roundInteractionInclusion[r][iI]) {
+														double intActConcTemp = oInt.activityAlphas.get(iComp)[r] * enr.concentration;
 
-													if(bm == bm0) {
-														for(int sP=0; sP<2; sP++) {
-															ArrayList<Double> alphaTempP = longAlphaList.get(bm1).get(sP);
-															double[][] alphaIntTemp      = oInt.interactionAlphas.get(iComp).get(s).get(sP);
-															for(int xP=0; xP<nf1; xP++)
-																tempWeight += nablaF1[r] * alphaIntTemp[x][xP] * intActConcTemp * alphaTemp.get(x)  * alphaTempP.get(xP);
+														if(bm == bm0) {
+															for(int sP=0; sP<2; sP++) {
+																ArrayList<Double> alphaTempP = longAlphaList.get(bm1).get(sP);
+																double[][] alphaIntTemp      = oInt.interactionAlphas.get(iComp).get(s).get(sP);
+																for(int xP=0; xP<nf1; xP++)
+																	tempWeight += nablaF1[r] * alphaIntTemp[x][xP] * intActConcTemp * alphaTemp.get(x)  * alphaTempP.get(xP);
+															}
 														}
-													}
 
-													if(bm == bm1) {
-														for(int sP=0; sP<2; sP++) {
-															ArrayList<Double> alphaTempP = longAlphaList.get(bm0).get(sP);
-															double[][] alphaIntTemp      = oInt.interactionAlphas.get(iComp).get(sP).get(s);
-															for(int xP=0; xP<nf0; xP++) {
-																tempWeight += nablaF1[r] * alphaIntTemp[xP][x] * intActConcTemp * alphaTempP.get(xP) * alphaTemp.get(x);
+														if(bm == bm1) {
+															for(int sP=0; sP<2; sP++) {
+																ArrayList<Double> alphaTempP = longAlphaList.get(bm0).get(sP);
+																double[][] alphaIntTemp      = oInt.interactionAlphas.get(iComp).get(sP).get(s);
+																for(int xP=0; xP<nf0; xP++) {
+																	tempWeight += nablaF1[r] * alphaIntTemp[xP][x] * intActConcTemp * alphaTempP.get(xP) * alphaTemp.get(x);
+																}
 															}
 														}
 													}
@@ -1562,12 +1852,14 @@ public class CountTable extends ModelComponent  {
 						//Calculates the gradient of the activities. Note: This is the activity gradient, not the log(Activity) gradient!!!!
 						if(oBM.fitActivity) {
 							for(int r=0; r<nColumns; r++)
-								activityGradients.get(bm)[r]            +=          nablaF1[r] * alphaSeq[bm] * enr.concentration;
+								if(enr.roundBindingModeInclusion[r][bm])
+									activityGradients.get(bm)[r]            +=          nablaF1[r] * alphaSeq[bm] * enr.concentration;
 							
 							//Computes the variance of the activityygradient.
 							if(computeVariance)
 								for(int r=0; r<nColumns; r++)
-									activityGradientsSquared.get(bm)[r] += Math.pow(nablaF1[r] * alphaSeq[bm] * enr.concentration, 2);
+									if(enr.roundBindingModeInclusion[r][bm])
+										activityGradientsSquared.get(bm)[r] += Math.pow(nablaF1[r] * alphaSeq[bm] * enr.concentration, 2);
 							
 						}
 
@@ -1577,7 +1869,8 @@ public class CountTable extends ModelComponent  {
 							//  gradientWeight = f^1 * nablaN[r] * a[bm,r]  = dL / dLog[Alpha] 					
 							gradientWeight[bm] = 0;
 							for(int r=0; r<nColumns; r++)
-								gradientWeight[bm] += nablaF1[r] * oBM.activityAlphas.get(iComp)[r] * enr.concentration;
+								if(enr.roundBindingModeInclusion[r][bm])
+									gradientWeight[bm] += nablaF1[r] * oBM.activityAlphas.get(iComp)[r] * enr.concentration;
 
 							ArrayList<Double> a0 = longAlphaList.get(bm).get(0),             a1 = longAlphaList.get(bm).get(1);
 							double[]          b0 = oBM.positionBiasAlphas.get(iComp).get(0), b1 = oBM.positionBiasAlphas.get(iComp).get(1);
@@ -1625,12 +1918,13 @@ public class CountTable extends ModelComponent  {
 
 									//Gradient of interactions 
 									double[][] alphaIntGrad                  = interactionGradients.get(iI).get(s1).get(s2);
-									double[][] alphaIntGradSquared 	         = interactionGradientsSquared.get(iI).get(s1).get(s2);
+									double[][] alphaIntGradSquared 	         =computeVariance ? interactionGradientsSquared.get(iI).get(s1).get(s2) : null;
 									for(int x1=0; x1<nf1; x1++) {
 										for(int x2=0; x2<nf2; x2++) { 
 											double gradSum = 0.0;
 											for(int r=0; r<nColumns; r++) 
-												gradSum                     += nablaF1[r] * alphaIntTemp[x1][x2] * alphaIntActTemp[r] * enr.concentration * alpha1.get(x1) * alpha2.get(x2);
+												if(enr.roundInteractionInclusion[r][iI])
+													gradSum                     += nablaF1[r] * alphaIntTemp[x1][x2] * alphaIntActTemp[r] * enr.concentration * alpha1.get(x1) * alpha2.get(x2);
 											alphaIntGrad[x1][x2]            += gradSum;
 											if(computeVariance)
 												alphaIntGradSquared[x1][x2] += gradSum * gradSum;
@@ -1638,16 +1932,18 @@ public class CountTable extends ModelComponent  {
 									}
 
 									//Interaction-activity Gradients...
-									double[] alphaIntActGrad                 = intActivityGradients.get(iI);
-									double[]   alphaIntActGradSquared        = intActivityGradientsSquared.get(iI);
+									double[] alphaIntActGrad                 =                   intActivityGradients.get(iI);
+									double[] alphaIntActGradSquared          = computeVariance ? intActivityGradientsSquared.get(iI) : null;
 									for(int r=0; r<nColumns; r++) {
-										double gradSum = 0.0;
-										for(int x1=0; x1<nf1; x1++)
-											for(int x2=0; x2<nf2; x2++)
-												gradSum                     += nablaF1[r] * alphaIntTemp[x1][x2]                      * enr.concentration* alpha1.get(x1) * alpha2.get(x2);
-										alphaIntActGrad[r] += gradSum;
-										if(computeVariance)
-											alphaIntActGradSquared[r]       += gradSum * gradSum;
+										if(enr.roundInteractionInclusion[r][iI]) {
+											double gradSum = 0.0;
+											for(int x1=0; x1<nf1; x1++)
+												for(int x2=0; x2<nf2; x2++)
+													gradSum                     += nablaF1[r] * alphaIntTemp[x1][x2]                      * enr.concentration* alpha1.get(x1) * alpha2.get(x2);
+											alphaIntActGrad[r] += gradSum;
+											if(computeVariance)
+												alphaIntActGradSquared[r]       += gradSum * gradSum;
+										}
 									}
 								}
 							}
@@ -1909,7 +2205,6 @@ public class CountTable extends ModelComponent  {
 					enrGradient.saveToJSON_squared(      outObject, squaredKey);
 				}
 			}
-			
 			outObject.put("functionValue",               functionValue);
 			//Saves the squared function value
 			if(computeVariance)

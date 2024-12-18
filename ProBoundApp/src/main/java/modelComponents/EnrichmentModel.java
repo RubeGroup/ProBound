@@ -22,6 +22,10 @@ public abstract class EnrichmentModel extends ModelComponent {
 	ArrayList<BindingModeInteraction> allInteractions;
 	public ArrayList<BindingMode> bindingModes;
 	public ArrayList<BindingModeInteraction> interactions;
+	
+	public ArrayList<ArrayList<Integer>> roundSpecificBindingModes, roundSpecificInteractions;
+	public boolean noRSBM, noRSint; //indicates if no round-specific binding modes/interactions were specified.
+	public boolean[][] roundBindingModeInclusion, roundInteractionInclusion;
 	public int nModes = 0, nInteractions = 0;
 	public CountTable countTable = null;
 	public double concentration;
@@ -74,6 +78,39 @@ public abstract class EnrichmentModel extends ModelComponent {
 		for(BindingModeInteraction bmInt : interactions)
 			aInt.put(bmInt.iComp);
 		oEnr.put("bindingModeInteractions", aInt);
+		
+		//Saves round-specific binding modes
+		JSONArray aRSBM = new JSONArray();
+		if(noRSBM)
+			aRSBM.put(new JSONArray());
+		else {
+			for(int iCol=0; iCol<nColumns; iCol++) {
+				JSONArray temp = new JSONArray();
+				int nRSBMR = roundSpecificBindingModes.get(iCol).size();
+				for(int iRSBM=0; iRSBM<nRSBMR; iRSBM++)
+					temp.put(bindingModes.get(roundSpecificBindingModes.get(iCol).get(iRSBM)).iComp);
+				aRSBM.put(temp);
+			}			
+		}
+		if(aRSBM!=null)
+			oEnr.put("roundSpecificBindingModes", aRSBM);
+		
+		//Saves round-specific binding mode interactions
+		JSONArray aRSInt = new JSONArray();
+		if(noRSint) //Default empty array
+			aRSInt.put(new JSONArray());
+		else { //Saves the indices of the binding modes.
+			for(int iCol=0; iCol<nColumns; iCol++) {
+				JSONArray temp = new JSONArray();
+				int nRSIntR = roundSpecificInteractions.get(iCol).size();
+				for(int iRSInt=0; iRSInt<nRSIntR; iRSInt++)
+					temp.put(interactions.get(roundSpecificInteractions.get(iCol).get(iRSInt)).iComp);
+				aRSInt.put(temp);
+			}			
+		}
+		if(aRSInt!=null)
+			oEnr.put("roundSpecificBindingModeInteractions", aRSInt);
+
 		
 		//Saves the modifications
 		JSONArray aMod = new JSONArray();
@@ -162,7 +199,91 @@ public abstract class EnrichmentModel extends ModelComponent {
 			}
 		}
 		
-		//Loads interactions.
+		//Reads round-specific binding modes
+		roundSpecificBindingModes = new ArrayList<ArrayList<Integer>>();
+		roundBindingModeInclusion = new boolean[nColumns][nModes];
+		JSONArray aRSBM = oSettEnr.has("roundSpecificBindingModes") ? oSettEnr.getJSONArray("roundSpecificBindingModes") : null;
+		
+		if(aRSBM==null || (aRSBM.length()==1 && aRSBM.getJSONArray(0).length()==0)) {
+			noRSBM=true;
+			 //Adds all binding modes.
+			for(int iR=0; iR<nColumns; iR++) {
+				ArrayList<Integer> temp = new ArrayList<Integer>();
+				for(int iBM=0; iBM<nModes; iBM++) {
+					temp.add(iBM);
+					roundBindingModeInclusion[iR][iBM] = true;
+				}
+				roundSpecificBindingModes.add(temp);
+			}
+		} else {
+			noRSBM=false;
+			//Reading the round-specific binding modes.
+			//Checks so the number of columns is correct.
+			if(aRSBM.length() != nColumns) 
+				throw new IllegalArgumentException("The number of columns does not match the length of 'roundSpecificBindingModes' for enrichment model "+iComp+".");
+			//Loops over the columns
+			for(int iR=0; iR<nColumns; iR++) {
+				JSONArray aRSBMR = aRSBM.getJSONArray(iR);
+				ArrayList<Integer> temp = new ArrayList<Integer>();
+				//Searches for a match for each binding mode
+				for(int iBM=0; iBM<aRSBMR.length(); iBM++) {
+					int iMatch = -1;
+					for(int iTest=0; iTest<nModes; iTest++)
+						if (bindingModes.get(iTest).iComp == aRSBMR.getInt(iBM))
+							iMatch = iTest;
+					if(iMatch==-1) 
+						throw new IllegalArgumentException("No matching binding mode found when parsing 'roundSpecificBindingModes' for enrichment model "+iComp+".");
+					temp.add(iMatch);
+					roundBindingModeInclusion[iR][iMatch] = true;
+				}
+				roundSpecificBindingModes.add(temp);
+			}
+		}
+		
+		//Reads interactions
+		roundSpecificInteractions = new ArrayList<ArrayList<Integer>>();
+		roundInteractionInclusion = new boolean[nColumns][nInteractions];
+		JSONArray aRSInt = oSettEnr.has("roundSpecificBindingModeInteractions") ? oSettEnr.getJSONArray("roundSpecificBindingModeInteractions") : null;
+		if(aRSInt==null || (aRSInt.length()==1 && aRSInt.getJSONArray(0).length()==0)) {
+			noRSint=true;
+			 //Adds all interactions
+			for(int iR=0; iR<nColumns; iR++) {
+				ArrayList<Integer> temp = new ArrayList<Integer>();
+				for(int iInt=0; iInt<nInteractions; iInt++) {
+					temp.add(iInt);
+					roundInteractionInclusion[iR][iInt] = true;
+				}
+				roundSpecificInteractions.add(temp);
+			}
+		} else {
+			noRSint=false;
+			//Reading the round-specific interactions.
+			//Checks so the number of columns is correct.
+			if(aRSInt.length() != nColumns) 
+				throw new IllegalArgumentException("The number of columns does not match the length of 'roundSpecificBindingModeInteractions' for enrichment model "+iComp+".");
+			//Loops over the columns
+			for(int iR=0; iR<nColumns; iR++) {
+				JSONArray aRSIntR = aRSInt.getJSONArray(iR);
+				ArrayList<Integer> temp = new ArrayList<Integer>();
+				//Searches for a match for each binding mode interaction
+				for(int iInt=0; iInt<aRSIntR.length(); iInt++) {
+					int iMatch = -1;
+					for(int iTest=0; iTest<nInteractions; iTest++) {
+						if (interactions.get(iTest).iComp == aRSIntR.getInt(iInt))
+							iMatch = iTest;
+					}
+					if(iMatch==-1) 
+						throw new IllegalArgumentException("No matching binding mode interaction found when parsing 'roundSpecificBindingModeInteractions' for enrichment model "+iComp+".");
+					temp.add(iMatch);
+					roundInteractionInclusion[iR][iMatch] = true;
+				}
+				roundSpecificInteractions.add(temp);
+			}
+		}		
+		
+
+				
+		//Loads modifications.
 		JSONArray aMod = oSettEnr.getJSONArray("modifications");
 		modifications  = new HashSet<String>();
 		for(int i=0; i<aMod.length(); i++) {
@@ -199,13 +320,15 @@ public abstract class EnrichmentModel extends ModelComponent {
 		String modelType = config.getJSONObject("modelSettings").getJSONArray("enrichmentModel").getJSONObject(iExpIn).getString("modelType");
 
 		if(modelType.equals("SELEX"))
-			return new SELEXModel(      config, iExpIn, inTable, allBindingModes, allInteractions);
+			return new SELEXModel(              config, iExpIn, inTable, allBindingModes, allInteractions);
 		else if(modelType.equals("RhoGamma"))
-			return new RhoGammaModel(   config, iExpIn, inTable, allBindingModes, allInteractions);
+			return new RhoGammaModel(           config, iExpIn, inTable, allBindingModes, allInteractions);
 		else if(modelType.equals("Exponential"))
-			return new ExponentialModel(config, iExpIn, inTable, allBindingModes, allInteractions);
+			return new ExponentialModel(        config, iExpIn, inTable, allBindingModes, allInteractions);
 		else if(modelType.equals("ExponentialKinetics"))
 			return new ExponentialKineticsModel(config, iExpIn, inTable, allBindingModes, allInteractions);
+		else if(modelType.equals("InputFreeFraction"))
+			return new InputFreeFraction(       config, iExpIn, inTable, allBindingModes, allInteractions);
 		else
             throw new IllegalArgumentException("Invalid enrichment model type: " + modelType);
 		//return null;		
@@ -225,6 +348,7 @@ public abstract class EnrichmentModel extends ModelComponent {
 	public void computeAlphas(ArrayList<SlidingWindow> sw, double[] alphaSeq, double[] alphaInt, double[] alphaRI, 
 			ArrayList<ArrayList<ArrayList<Double>>> longAlphaList, LongSequence probe) {
 
+		//Computes the sliding window for all binding modes.
 		for(int iBm=0; iBm<nModes; iBm++){	
 			ArrayList<ArrayList<Double>> longAlphaListTemp;
 			BindingMode oBM = bindingModes.get(iBm);
@@ -312,19 +436,31 @@ public abstract class EnrichmentModel extends ModelComponent {
 			alphaRI[r] = 0;
 
 			//Adds contribution from single-binding mode term
-			for(int iBM=0; iBM<nModes; iBM++) {
+			for(Integer iBM : roundSpecificBindingModes.get(r)) {
 				BindingMode oBM = bindingModes.get(iBM);
 				if(oBM.includeComponent)
 					alphaRI[r] += alphaSeq[iBM] * oBM.activityAlphas.get(iComp)[r] * concentration;
-				//System.out.println("includeComponent="+oBM.includeComponent+", iBM="+iBM+", r="+r+", "+alphaSeq[iBM] * oBM.activityAlphas.get(iComp)[r]);
+
 			}
 
+//			for(int iBM=0; iBM<nModes; iBM++) {
+//				BindingMode oBM = bindingModes.get(iBM);
+//				if(oBM.includeComponent)
+//					alphaRI[r] += alphaSeq[iBM] * oBM.activityAlphas.get(iComp)[r] * concentration;
+//			}
+
 			//Adds contribution from interaction term.
-			for(int iInt=0; iInt<nInteractions; iInt++) {
+			for(Integer iInt : roundSpecificInteractions.get(r)) {
 				BindingModeInteraction oInt = interactions.get(iInt); 
 				if(oInt.includeComponent)
 					alphaRI[r] += alphaInt[iInt]  * oInt.activityAlphas.get(iComp)[r] * concentration;
 			}
+				
+//			for(int iInt=0; iInt<nInteractions; iInt++) {
+//				BindingModeInteraction oInt = interactions.get(iInt); 
+//				if(oInt.includeComponent)
+//					alphaRI[r] += alphaInt[iInt]  * oInt.activityAlphas.get(iComp)[r] * concentration;
+//			}
 		}
 
 		if(nModes ==0)

@@ -107,13 +107,18 @@ public class BindingModeInteraction extends ModelComponent {
 			//Computes the expected partition function  
 			double[] expectedPartitionFunction = countTables.get(iExp).computeExpectedPartitionFunction();
 			
+			//If  partition function=0 (which it is for the first binding mode, and for columns with no active binding modes/interactions), set the partition function to 1. 
+			for(int i=0; i<expectedPartitionFunction.length; i++)
+				if(expectedPartitionFunction[i]==0)
+					expectedPartitionFunction[i] = 1;
+			
 			//Computes the sum of the interactions.s 
 			double alphaPBSum =  tr_AAdd(interactionAlphas.get(iExp));
 			
 			//Deals with the case where no interactions fit:
 			if(alphaPBSum==0)
 				alphaPBSum = 1;
-
+			
 			//Computes the appropriate activity rescaling factor.
 			double[] rescalingFactor =  Array.scalarMultiply(expectedPartitionFunction, weight / (alphaSeq0 * alphaSeq1 * alphaPBSum));
 			

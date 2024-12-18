@@ -280,6 +280,8 @@ public class BuildingFunction {
 		JSONObject stepCopy                   = ModelComponent.clone_JSON_O(buildStep);
 	
 		newElement.put( "countTableFile",       stepCopy.getString("countTableFile"));
+		if(stepCopy.has("testFolds"))
+			newElement.put("testFolds",stepCopy.getJSONArray("testFolds"));
 		newElement.put( "variableRegionLength", stepCopy.getInt("variableRegionLength"));
 		newElement.put( "nColumns",             stepCopy.getInt("nColumns"));		
 		newElement.put( "nColumns",             stepCopy.getInt("nColumns"));
@@ -345,6 +347,22 @@ public class BuildingFunction {
 				rsLib.close();
 			}
 			rsCol.close();
+			
+			// GETS INFORMATION ABOUT THE TESTING DATA, IF APPLICABLE
+			if(buildStep.has("count_table_id_test")) {
+				int countTableIDtest     = buildStep.getInt("count_table_id_test");
+				stmtCT = c.createStatement();
+				rsCT   = stmtCT.executeQuery("SELECT * FROM count_table WHERE count_table_id="+countTableIDtest+";");
+				rsCT.next();
+				String  study_name_test      = rsCT.getString("study_name");
+				String  experiment_name_test = rsCT.getString("experiment_name");
+				Integer max_reads_test       = rsCT.getInt("max_reads");
+				newBuildStep.put("countTableFileTest", cellx_dir+"/pipeline/countTables/"+study_name_test+"/"+experiment_name_test+"."+max_reads_test+".tsv.gz");
+				stmtCT.close();
+				rsCT.close();
+			}
+				
+			//Closes DB connection
 			c.close();
 			
 			if(buildStep.has("modeledColumns"))
@@ -359,6 +377,10 @@ public class BuildingFunction {
 		
 		if(buildStep.has("transliterate")) {
 			newBuildStep.put("transliterate", buildStep.getJSONObject("transliterate"));
+		}
+
+		if(buildStep.has("testFolds")) {
+			newBuildStep.put("testFolds", buildStep.getJSONArray("testFolds"));
 		}
 
 		addTable(newBuildStep);
@@ -414,6 +436,16 @@ public class BuildingFunction {
 			newElement.put("bindingModeInteractions", newInt);
 		}
 		
+		//Copies round-specific binding modes/interactions
+		if(stepCopy.has(    "roundSpecificBindingModes")) {
+			newElement.put( "roundSpecificBindingModes",            stepCopy.getJSONArray("roundSpecificBindingModes"));
+			stepCopy.remove("roundSpecificBindingModes");
+		}
+		if(stepCopy.has(    "roundSpecificBindingModeInteractions")) {
+			newElement.put( "roundSpecificBindingModeInteractions", stepCopy.getJSONArray("roundSpecificBindingModeInteractions"));
+			stepCopy.remove("roundSpecificBindingModeInteractions");
+		}
+
 		if(newElement.get("modelType").equals("SELEX_NRLB")) {
 			//4) Round is copied for "SELEX_NRLB"
 			newElement.put("round", stepCopy.getInt("round"));
@@ -565,7 +597,10 @@ public class BuildingFunction {
 			//Uses appropriate columns if experiment-specific modeledColumns is specified (of the form [[0,1], [1,3],...])
 			if(stepCopy.has("modeledColumns") && stepCopy.getJSONArray("modeledColumns").get(0) instanceof JSONArray )
 				stepCopy.put("modeledColumns", stepCopy.getJSONArray("modeledColumns").getJSONArray(i));
-				
+
+			if(stepCopy.has("testFolds") && stepCopy.getJSONArray("testFolds").get(0) instanceof JSONArray )
+				stepCopy.put("testFolds", stepCopy.getJSONArray("testFolds").getJSONArray(i));
+
 			addSELEXTableDB(stepCopy);
 		}
 	}

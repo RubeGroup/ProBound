@@ -22,6 +22,9 @@ public class BindingMode extends ModelComponent  {
 	//Indicators for determining what sub-components to fit.
 	public boolean fitMono, fitDi, fitActivity, fitPositionBias;
 	
+	//Regularization
+	public Double pseudoCountMono, pseudoCountDi;
+	
 	//Fitting strategy and constraints
 	public int wPositionBiasBin, minSize, maxSize, maxFlankLength;
 	public boolean fitK, fitFlankLength, shiftMotif, heuristicShift, optimizeSizeHeuristic;
@@ -297,18 +300,24 @@ public class BindingMode extends ModelComponent  {
 	//Computes the value of the Dirichlet regularization
 	public double getDirichletValue(double pseudocount) {
 
+		double monoCount = pseudoCountMono!=null ? pseudoCountMono : pseudocount;
+		double diCount   = pseudoCountDi!=null   ? pseudoCountDi   : pseudocount;
+		
 		double out = 0.0;
 		int nMono  = letterOrder.length();
 
 		//Computes the weight
-		double weight = 0, nIncExp = 0;
+		double monoWeight = 0, diWeight = 0, nIncExp = 0;
 		for(CountTable ct: countTables) {
 			if(ct.includeComponent) {
-				weight += pseudocount / ct.nReads;
+				monoWeight += monoCount / ct.nReads;
+				diWeight   += diCount   / ct.nReads;
 				nIncExp += 1;
 			}
 		}
-		weight /= nIncExp;
+		
+		monoWeight /= nIncExp;
+		diWeight   /= nIncExp;
 		
 		//Mononucleotide contribution
 		if(fitMono) {
@@ -316,10 +325,10 @@ public class BindingMode extends ModelComponent  {
 				double alphaSum = 0;
 				for(int iMono=0; iMono<nMono; iMono++) {
 					double beta = monoBetas[x*nMono + iMono]; 
-					out        -= weight*beta;
+					out        -= monoWeight*beta;
 					alphaSum   += Math.exp(beta);
 				}
-				out += weight * nMono * Math.log(alphaSum);
+				out += monoWeight * nMono * Math.log(alphaSum);
 			}
 		}
 		
@@ -331,10 +340,10 @@ public class BindingMode extends ModelComponent  {
 					double alphaSum = 0;
 					for(int iDi=0; iDi<nDi;iDi++) {
 						double beta = diBetas.get(iD)[x*nDi + iDi];
-						out        -= weight*beta;
+						out        -= diWeight*beta;
 						alphaSum   += Math.exp(beta);
 					}
-					out += weight * nDi * Math.log(alphaSum);
+					out += diWeight * nDi * Math.log(alphaSum);
 				}
 			}
 		}
@@ -344,17 +353,21 @@ public class BindingMode extends ModelComponent  {
 	
 	public void addDirichletGradient(JSONObject oGradBM, double pseudocount) {
 		
+		double monoCount = pseudoCountMono!=null ? pseudoCountMono : pseudocount;
+		double diCount   = pseudoCountDi!=null   ? pseudoCountDi   : pseudocount;
 		int nMono  = letterOrder.length();
 		
 		//Computes the weight
-		double weight = 0, nIncExp = 0;
+		double monoWeight = 0, diWeight=0, nIncExp = 0;
 		for(CountTable ct: countTables) {
 			if(ct.includeComponent) {
-				weight += pseudocount / ct.nReads;
+				monoWeight += monoCount / ct.nReads;
+				diWeight   += diCount   / ct.nReads;
 				nIncExp += 1;
 			}
 		}
-		weight /= nIncExp;
+		monoWeight /= nIncExp;
+		diWeight   /= nIncExp;
 		
 		//Mononucleotide contribution
 		if(fitMono) {
@@ -371,7 +384,7 @@ public class BindingMode extends ModelComponent  {
 				
 				for(int iMono=0; iMono<nMono; iMono++) {
 					int i = x*nMono + iMono;
-					aMono.put(i, aMono.getDouble(i) + weight * (nMono * (expMono[iMono] / expSum) - 1));
+					aMono.put(i, aMono.getDouble(i) + monoWeight * (nMono * (expMono[iMono] / expSum) - 1));
 				}
 			}
 		}
@@ -394,7 +407,7 @@ public class BindingMode extends ModelComponent  {
 					
 					for(int iDi=0; iDi<nDi; iDi++) {
 						int i = x*nDi + iDi;
-						aDi.put(i, aDi.getDouble(i) + weight * (nDi * (expDi[iDi] / expSum) - 1));
+						aDi.put(i, aDi.getDouble(i) + diWeight * (nDi * (expDi[iDi] / expSum) - 1));
 					}
 				}
 			}
@@ -414,7 +427,7 @@ public class BindingMode extends ModelComponent  {
 			//Computes the expected partition function  
 			double[] expectedPartitionFunction = ct.computeExpectedPartitionFunction();
 			
-			//If  partition function=0 (which it is for the first binding mode), set the partition function to 1. 
+			//If  partition function=0 (which it is for the first binding mode, and for columns with no active binding modes/interactions), set the partition function to 1. 
 			for(int i=0; i<expectedPartitionFunction.length; i++)
 				if(expectedPartitionFunction[i]==0)
 					expectedPartitionFunction[i] = 1;
@@ -1032,6 +1045,13 @@ public class BindingMode extends ModelComponent  {
 		oBm.put("singleStrand",             singleStrand);
 		oBm.put("fitLogActivity",           fitLogActivity);
 		
+		if(pseudoCountMono!=null)
+			oBm.put("pseudocount_mono",     pseudoCountMono);
+		if(pseudoCountDi!=null)
+			oBm.put("pseudocount_di",       pseudoCountDi);
+		
+		
+		
 		JSONArray aMod = new JSONArray();
 		for(int iMod=0; iMod<modifications.size(); iMod++) {
 			JSONObject oMod = new JSONObject();
@@ -1075,6 +1095,9 @@ public class BindingMode extends ModelComponent  {
 		singleStrand   = oBm.getBoolean("singleStrand");
 		fitLogActivity = oBm.getBoolean("fitLogActivity");
 		dInt           = Math.max(0,Math.min(k-1, dIntMax));
+		
+		pseudoCountMono= oBm.has("pseudocount_mono") ? oBm.getDouble("pseudocount_mono") : null;
+		pseudoCountDi  = oBm.has("pseudocount_di")   ? oBm.getDouble("pseudocount_di")   : null;
 		
 		//Loads modifications
 		JSONArray aMod = oBm.getJSONArray("modifications");

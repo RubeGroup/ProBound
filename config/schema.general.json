@@ -146,7 +146,7 @@
                 "default": { "modelType": "SELEX",  "bindingModes": [-1], "bindingModeInteractions": [-1] },
                 "properties": {   
                   "modelType":             { "type": "string", "default": "SELEX", 
-                                         "enum": ["SELEX", "SELEX_NRLB", "RhoGamma", "Exponential", "ExponentialKinetics"] },
+                                         "enum": ["SELEX", "SELEX_NRLB", "RhoGamma", "Exponential", "ExponentialKinetics", "InputFreeFraction"] },
                   "modifications":         { "type": "array",  "default": [], 
                                                         "items": { "type": "string" } },
                   "bindingModes":          { "type": "array",  "default": [-1],
@@ -155,6 +155,12 @@
                   "bindingModeInteractions": { "type": "array",  "default": [-1],
                                           "description": "Specifies what interactions are included. [-1] gives all",
                                           "items": { "type": "number" } },
+                  "roundSpecificBindingModes": {
+						"type": "array",  "default": [[]], "description": "Specifies what binding modes should be included in each round. [[]] gives all", "items": {
+                        	"type": "array", "items": { "type": "number" } } },
+                  "roundSpecificBindingModeInteractions": {
+						"type": "array",  "default": [[]], "description": "Specifies what interactions should be included in each round. [[]] gives all", "items": {
+                        	"type": "array", "items": { "type": "number" } } },
                   "concentration":         { "type": "number", "default": 1, "minimum": 0 },
                   "cumulativeEnrichment":  { "type": "boolean"}
                 }
@@ -205,6 +211,15 @@
                     "properties": {
                       "modelType":             { "type": "string", "enum": ["ExponentialKinetics"]}
                     }
+                  },
+                  {
+                    "type": "object",
+                    "description": "Experiment modeling Input/Free/Fraction(s)",
+                    "default": {},
+                    "properties": {
+                      "modelType":             { "type": "string", "enum": ["InputFreeFraction"]},
+                      "cumulativeEnrichment":  { "type": "boolean", "enum": [ false ]}
+                    }
                   }
                 ]
               }
@@ -227,6 +242,10 @@
               "rightFlank":      { "type": "string",  "default": ""                                   },
               "leftFlank":       { "type": "string",  "default": ""                                   },
               "modeledColumns":  { "type": "array",   "default": [-1], "items": { "type": "integer" } },
+              "testFolds":       { "type": "array",   "default": [],   "items": { "type": "integer" } },
+              "probeBias":       { "type": "boolean", "default": true                                 },
+              "errorModel":      { "type": "string", "default": "Poisson", 
+					"enum": ["Poisson", "Normal", "LogNormal"]                                        },
               "transliterate":   {
                 "type": "object",
                 "required": ["in", "out"],
@@ -254,6 +273,8 @@
               "positionBias":          { "type": "boolean", "default": false           },
               "singleStrand":          { "type": "boolean", "default": false           },
               "fitLogActivity":        { "type": "boolean", "default": true            },
+              "pseudocount_mono":      { "type": "number"                              },
+              "pseudocount_di":        { "type": "number"                              },
 
               "modifications": {
                 "type": "array",

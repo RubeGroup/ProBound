@@ -12,6 +12,7 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 import org.json.JSONObject;
@@ -45,8 +46,13 @@ public class Misc {
 		String rFlank			= oData.getString("rightFlank");
 		String inputFileType    = oData.getString("inputFileType");
 		int nColumns            = oData.getInt("nColumns");
-		String[] samplePaths    = oData.getString("countTableFile").split(",");
-
+		String[] samplePaths;
+		samplePaths    = oData.getString("countTableFile").split(",");
+		//TODO: Clean up.
+//		if(!isTest)
+//		else
+//			samplePaths    = oData.getString("countTableFileTest").split(",");
+		
 		boolean verbose         = false;
 
 		MultiRoundData out      = null;
@@ -256,7 +262,69 @@ public class Misc {
 
 	}
 	
-	
+	//Splits a MultiRoundData table into training and testing tables based on a folds file
+	public static ArrayList<MultiRoundData> splitTableTrainTest(String foldGzPath, MultiRoundData inTable, int[] testFolds){
+		
+		int nCols = inTable.countPerRound.length;
+		int nLines = inTable.longProbes.size();
+
+		//Creates a set with the test folds.
+		Set<Integer> testSet= new HashSet<Integer>();
+		for(int i=0; i<testFolds.length; i++)
+			testSet.add(testFolds[i]);
+		
+		//Allocates variables for the new tables
+		ArrayList<int[]> countTableTrain         = new ArrayList<int[]>();
+		ArrayList<int[]> countTableTest          = new ArrayList<int[]>();
+		ArrayList<LongSequence> longProbesTrain  = new ArrayList<LongSequence>();
+		ArrayList<LongSequence> longProbesTest   = new ArrayList<LongSequence>();
+		int[] countPerRoundTrain                 = new int[nCols];
+		int[] countPerRoundTest                  = new int[nCols];
+		
+		try {
+			//Opens the folds.gz file
+			InputStream fileStream = new FileInputStream(foldGzPath);
+			InputStream gzipStream = new GZIPInputStream(fileStream);
+			Reader decoder     = new InputStreamReader(gzipStream, "UTF-8");
+			BufferedReader br = new BufferedReader(decoder);
+			
+			//Loops over old table
+			for(int i=0; i<nLines; i++) {
+				int fold       = Integer.parseInt(br.readLine());
+				int[] c        = inTable.countTable.get(i);
+				LongSequence s = inTable.longProbes.get(i);
+				if(testSet.contains(fold)) {
+					//Add to test table
+					countTableTest.add( c);
+					longProbesTest.add( s);
+					for(int col=0; col<nCols; col++)
+						countPerRoundTest[col] += c[col];
+					
+				} else {
+					//Add to train table
+					countTableTrain.add(c);
+					longProbesTrain.add(s);
+					for(int col=0; col<nCols; col++)
+						countPerRoundTrain[col] += c[col];
+				}
+				
+			}
+			
+			br.close();
+
+			
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+
+		//Creates the output 
+		ArrayList<MultiRoundData> out = new ArrayList<MultiRoundData>();
+		out.add(new MultiRoundData(inTable.leftFlank, inTable.rightFlank, countTableTrain, longProbesTrain, countPerRoundTrain, inTable.sc));
+		out.add(new MultiRoundData(inTable.leftFlank, inTable.rightFlank, countTableTest,  longProbesTest,  countPerRoundTest,  inTable.sc));
+		
+		return out;
+	}
+
 
 	//Reads a single binary file, returns 32bp MultiRoundData object.
 	public static MultiRoundData readSeqFile(String samplePath, int l, String lFlank, String rFlank, LongSequence.SequenceClass sc) {
@@ -286,6 +354,8 @@ public class Misc {
 		
 		return out;
 	}
+	
+	
 	
 
 	//Formats double vectors
